@@ -39,7 +39,7 @@ score = (
     0.20 * (-yield_change * 5)
 )
 
-score = float(np.clip(score, -1, 1))
+score = np.clip(score.values[0], -1, 1) if hasattr(score, "values") else np.clip(score, -1, 1)
 
 scores = [
     score,
