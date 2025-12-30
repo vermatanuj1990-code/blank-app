@@ -1,104 +1,86 @@
 # =========================================================
-# COPPER PRICE OUTLOOK – GLOBAL + INDIA (MCX IMPACT)
-# 4-Day Short-Term Directional Model
+# COPPER PRICE OUTLOOK – GLOBAL + MCX IMPACT (INDIA)
 # =========================================================
 
 import streamlit as st
 import yfinance as yf
 import numpy as np
 
-st.set_page_config(page_title="Copper Outlook – India (MCX)", layout="centered")
+st.set_page_config(page_title="Copper Outlook – India", layout="centered")
 
 st.title("🔩 Copper Price Outlook – India (MCX)")
-st.caption("Short-term directional model | 4-Day View")
+st.caption("Global-driven directional model | 4-Day View")
 
-# -------------------------------
-# CONFIG
-# -------------------------------
-MCX_REFERENCE_PRICE = 720.0  # ₹/kg (adjust anytime)
-
-# -------------------------------
+# ---------------------------------------------------------
 # DATA FETCH
-# -------------------------------
+# ---------------------------------------------------------
 @st.cache_data(ttl=3600)
 def fetch_data():
     copper = yf.download("HG=F", period="60d", progress=False)
     dxy = yf.download("DX-Y.NYB", period="60d", progress=False)
     us10y = yf.download("^TNX", period="60d", progress=False)
-    usdinr = yf.download("USDINR=X", period="60d", progress=False)
-    return copper, dxy, us10y, usdinr
+    return copper, dxy, us10y
 
-copper, dxy, us10y, usdinr = fetch_data()
+copper, dxy, us10y = fetch_data()
 
-# -------------------------------
-# BASIC DATA CHECK
-# -------------------------------
-if (
-    copper.empty or dxy.empty or us10y.empty or usdinr.empty
-    or len(copper) < 25
-    or len(dxy) < 10
-    or len(us10y) < 10
-    or len(usdinr) < 10
-):
-    st.error("❌ Not enough market data yet. Please try later.")
+# ---------------------------------------------------------
+# BASIC VALIDATION
+# ---------------------------------------------------------
+if copper.empty or len(copper) < 30:
+    st.error("Not enough global copper data yet.")
     st.stop()
 
-# -------------------------------
+# ---------------------------------------------------------
 # GLOBAL COPPER MODEL
-# -------------------------------
+# ---------------------------------------------------------
 price = float(copper["Close"].iloc[-1])
+
 ma5 = float(copper["Close"].rolling(5).mean().iloc[-1])
 ma20 = float(copper["Close"].rolling(20).mean().iloc[-1])
 
 momentum = (ma5 - ma20) / price
-norm_momentum = momentum / 0.01
+momentum_score = np.clip(momentum / 0.01, -1, 1)
 
-roc = (price - copper["Close"].iloc[-6]) / copper["Close"].iloc[-6]
-norm_roc = roc / 0.03
+roc = (price - float(copper["Close"].iloc[-6])) / float(copper["Close"].iloc[-6])
+roc_score = np.clip(roc / 0.03, -1, 1)
 
-price_change = copper["Close"].iloc[-1] - copper["Close"].iloc[-2]
-oi_score = 0.4 if price_change > 0 else -0.4
+price_change = float(copper["Close"].iloc[-1] - copper["Close"].iloc[-2])
+trend_score = 0.4 if price_change > 0 else -0.4
 
-dxy_roc = (dxy["Close"].iloc[-1] - dxy["Close"].iloc[-6]) / dxy["Close"].iloc[-6]
-usd_score = -dxy_roc / 0.01
+# USD impact
+dxy_change = float(dxy["Close"].iloc[-1] - dxy["Close"].iloc[-6])
+usd_score = np.clip(-dxy_change / 1.0, -0.3, 0.3)
 
-yield_trend = us10y["Close"].iloc[-1] - us10y["Close"].iloc[-5]
-rate_score = -0.3 if yield_trend > 0 else 0.3
+# Rate impact
+yield_change = float(us10y["Close"].iloc[-1] - us10y["Close"].iloc[-5])
+rate_score = -0.2 if yield_change > 0 else 0.2
 
-trading_score = (
-    0.30 * norm_momentum +
-    0.20 * norm_roc +
-    0.20 * oi_score +
-    0.10 * usd_score +
+# Final global score
+global_score = (
+    0.30 * momentum_score +
+    0.25 * roc_score +
+    0.20 * trend_score +
+    0.15 * usd_score +
     0.10 * rate_score
 )
 
-trading_score = float(np.clip(trading_score, -1, 1))
+global_score = float(np.clip(global_score, -1, 1))
 
-# -------------------------------
-# 4-DAY SCORE DECAY
-# -------------------------------
+# ---------------------------------------------------------
+# 4-DAY DECAY MODEL
+# ---------------------------------------------------------
 scores = [
-    trading_score,
-    trading_score * 0.70,
-    trading_score * 0.50,
-    trading_score * 0.35
+    global_score,
+    global_score * 0.70,
+    global_score * 0.50,
+    global_score * 0.35
 ]
 
 labels = ["Today", "Tomorrow", "Day +2", "Day +3"]
 
-# -------------------------------
-# USDINR IMPACT
-# -------------------------------
-usdinr_change = (
-    usdinr["Close"].iloc[-1] - usdinr["Close"].iloc[-3]
-) / usdinr["Close"].iloc[-3]
-
-usdinr_change = float(np.clip(usdinr_change, -0.003, 0.003))  # ±0.3%
-
-# -------------------------------
+# ---------------------------------------------------------
 # INTERPRETATION
-# -------------------------------
+# ---------------------------------------------------------
 def interpret(score):
     if score > 0.35:
         return "Strong Bullish", "🟢"
@@ -111,34 +93,41 @@ def interpret(score):
     else:
         return "Strong Bearish", "🔴"
 
-# -------------------------------
+# ---------------------------------------------------------
+# MCX IMPACT ESTIMATION (NO MCX DATA USED)
+# ---------------------------------------------------------
+def mcx_impact(score, day_factor):
+    """
+    Converts global score to expected MCX % range
+    """
+    base_move = score * 1.2 * day_factor   # % impact
+    low = base_move * 0.7
+    high = base_move * 1.1
+    return round(low, 2), round(high, 2)
+
+day_factors = [1.0, 0.7, 0.45, 0.3]
+
+# ---------------------------------------------------------
 # DISPLAY
-# -------------------------------
-for label, score in zip(labels, scores):
+# ---------------------------------------------------------
+for label, score, df in zip(labels, scores, day_factors):
     bias, icon = interpret(score)
-
-    # Global copper expected move
-    global_pct = score * 1.2  # ~1.2% max swing model
-    mcx_pct = global_pct + usdinr_change
-    mcx_rupees = mcx_pct * MCX_REFERENCE_PRICE
-
     confidence = int(abs(score) * 100)
+
+    mcx_low, mcx_high = mcx_impact(score, df)
 
     st.markdown(
         f"""
 ### {icon} {label}
 **Global Bias:** {bias}  
 **Confidence:** {confidence}%  
-
-**Estimated MCX Impact (from global factors):**  
-• **{mcx_pct:+.2%}**  
-• **₹{mcx_rupees:+.2f} / kg**
-
-**Drivers:**  
-• Global copper momentum  
-• USDINR movement  
+**Expected MCX Impact:** `{mcx_low}% to {mcx_high}%`
 """
     )
 
 st.divider()
-st.caption("Note: MCX impact is derived from global copper & USDINR. No direct MCX price feed is used.")
+
+st.caption(
+    "MCX impact is an estimate derived from global copper trend, USD strength, "
+    "and rate environment. Not live MCX pricing."
+)
