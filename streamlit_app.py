@@ -23,6 +23,10 @@ def safe_download(symbol, period="40d"):
 
 # Fetch data
 copper = safe_download("HG=F")
+
+# Fallback if COMEX future fails
+if copper is None or len(copper) < 25:
+    copper = safe_download("COPPER=X")  # Yahoo spot copper proxy
 dxy = safe_download("DX-Y.NYB")
 us10y = safe_download("^TNX")
 usdinr = safe_download("USDINR=X")
