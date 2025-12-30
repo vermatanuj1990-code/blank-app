@@ -1,5 +1,6 @@
 # =========================================================
-# COPPER PRICE OUTLOOK – INDIA (MCX SAFE VERSION)
+# COPPER PRICE OUTLOOK – GLOBAL + INDIA (MCX IMPACT)
+# 4-Day Short-Term Directional Model
 # =========================================================
 
 import streamlit as st
@@ -11,91 +12,93 @@ st.set_page_config(page_title="Copper Outlook – India (MCX)", layout="centered
 st.title("🔩 Copper Price Outlook – India (MCX)")
 st.caption("Short-term directional model | 4-Day View")
 
+# -------------------------------
+# CONFIG
+# -------------------------------
+MCX_REFERENCE_PRICE = 720.0  # ₹/kg (adjust anytime)
+
+# -------------------------------
+# DATA FETCH
+# -------------------------------
 @st.cache_data(ttl=3600)
-def safe_download(symbol, period="40d"):
-    try:
-        df = yf.download(symbol, period=period, progress=False)
-        if df is None or df.empty:
-            return None
-        return df
-    except:
-        return None
+def fetch_data():
+    copper = yf.download("HG=F", period="60d", progress=False)
+    dxy = yf.download("DX-Y.NYB", period="60d", progress=False)
+    us10y = yf.download("^TNX", period="60d", progress=False)
+    usdinr = yf.download("USDINR=X", period="60d", progress=False)
+    return copper, dxy, us10y, usdinr
 
-# Fetch data
-copper = safe_download("HG=F")
+copper, dxy, us10y, usdinr = fetch_data()
 
-# Fallback if COMEX future fails
-if copper is None or len(copper) < 25:
-    copper = safe_download("COPPER=X")  # Yahoo spot copper proxy
-dxy = safe_download("DX-Y.NYB")
-us10y = safe_download("^TNX")
-usdinr = safe_download("USDINR=X")
-nifty = safe_download("^NSEI")
-
-missing = []
-
-for name, df in {
-    "Copper": copper,
-    "DXY": dxy,
-    "US 10Y Yield": us10y,
-    "USD/INR": usdinr,
-    "NIFTY": nifty
-}.items():
-    if df is None or len(df) < 25:
-        missing.append(name)
-
-if copper is None or len(copper) < 25:
-    st.error("❌ Copper data unavailable. Cannot run model.")
+# -------------------------------
+# BASIC DATA CHECK
+# -------------------------------
+if (
+    copper.empty or dxy.empty or us10y.empty or usdinr.empty
+    or len(copper) < 25
+    or len(dxy) < 10
+    or len(us10y) < 10
+    or len(usdinr) < 10
+):
+    st.error("❌ Not enough market data yet. Please try later.")
     st.stop()
 
-if missing:
-    st.warning(f"⚠️ Partial data missing: {', '.join(missing)}")
-
-# --- GLOBAL SCORES ---
+# -------------------------------
+# GLOBAL COPPER MODEL
+# -------------------------------
 price = float(copper["Close"].iloc[-1])
 ma5 = float(copper["Close"].rolling(5).mean().iloc[-1])
 ma20 = float(copper["Close"].rolling(20).mean().iloc[-1])
 
 momentum = (ma5 - ma20) / price
+norm_momentum = momentum / 0.01
+
 roc = (price - copper["Close"].iloc[-6]) / copper["Close"].iloc[-6]
+norm_roc = roc / 0.03
 
-global_score = 0.6 * (momentum / 0.01) + 0.4 * (roc / 0.03)
+price_change = copper["Close"].iloc[-1] - copper["Close"].iloc[-2]
+oi_score = 0.4 if price_change > 0 else -0.4
 
-# Dollar & Rates
-if dxy is not None:
-    dxy_roc = (dxy["Close"].iloc[-1] - dxy["Close"].iloc[-6]) / dxy["Close"].iloc[-6]
-    global_score += -0.2 * (dxy_roc / 0.01)
+dxy_roc = (dxy["Close"].iloc[-1] - dxy["Close"].iloc[-6]) / dxy["Close"].iloc[-6]
+usd_score = -dxy_roc / 0.01
 
-if us10y is not None:
-    rate_trend = us10y["Close"].iloc[-1] - us10y["Close"].iloc[-5]
-    global_score += -0.2 if rate_trend > 0 else 0.2
+yield_trend = us10y["Close"].iloc[-1] - us10y["Close"].iloc[-5]
+rate_score = -0.3 if yield_trend > 0 else 0.3
 
-# --- INDIA ADJUSTMENT ---
-india_score = 0.0
-india_weight = 0.0
+trading_score = (
+    0.30 * norm_momentum +
+    0.20 * norm_roc +
+    0.20 * oi_score +
+    0.10 * usd_score +
+    0.10 * rate_score
+)
 
-if usdinr is not None:
-    inr_move = (usdinr["Close"].iloc[-1] - usdinr["Close"].iloc[-5]) / usdinr["Close"].iloc[-5]
-    india_score += -inr_move
-    india_weight += 0.15
+trading_score = float(np.clip(trading_score, -1, 1))
 
-if nifty is not None:
-    nifty_roc = (nifty["Close"].iloc[-1] - nifty["Close"].iloc[-6]) / nifty["Close"].iloc[-6]
-    india_score += nifty_roc
-    india_weight += 0.15
-
-# Final base score
-final_base = 0.7 * global_score + india_weight * india_score
-final_base = float(np.clip(final_base, -1, 1))
-
-# 4-Day decay
+# -------------------------------
+# 4-DAY SCORE DECAY
+# -------------------------------
 scores = [
-    final_base,
-    final_base * 0.7,
-    final_base * 0.7 * 0.75,
-    final_base * 0.7 * 0.75 * 0.75
+    trading_score,
+    trading_score * 0.70,
+    trading_score * 0.50,
+    trading_score * 0.35
 ]
 
+labels = ["Today", "Tomorrow", "Day +2", "Day +3"]
+
+# -------------------------------
+# USDINR IMPACT
+# -------------------------------
+usdinr_change = (
+    usdinr["Close"].iloc[-1] - usdinr["Close"].iloc[-3]
+) / usdinr["Close"].iloc[-3]
+
+usdinr_change = float(np.clip(usdinr_change, -0.003, 0.003))  # ±0.3%
+
+# -------------------------------
+# INTERPRETATION
+# -------------------------------
 def interpret(score):
     if score > 0.35:
         return "Strong Bullish", "🟢"
@@ -108,14 +111,34 @@ def interpret(score):
     else:
         return "Strong Bearish", "🔴"
 
-labels = ["Today", "Tomorrow", "Day +2", "Day +3"]
-
+# -------------------------------
+# DISPLAY
+# -------------------------------
 for label, score in zip(labels, scores):
     bias, icon = interpret(score)
+
+    # Global copper expected move
+    global_pct = score * 1.2  # ~1.2% max swing model
+    mcx_pct = global_pct + usdinr_change
+    mcx_rupees = mcx_pct * MCX_REFERENCE_PRICE
+
     confidence = int(abs(score) * 100)
-    st.markdown(f"### {icon} {label}")
-    st.markdown(f"**Bias:** {bias}")
-    st.markdown(f"**Confidence:** {confidence}%")
+
+    st.markdown(
+        f"""
+### {icon} {label}
+**Global Bias:** {bias}  
+**Confidence:** {confidence}%  
+
+**Estimated MCX Impact (from global factors):**  
+• **{mcx_pct:+.2%}**  
+• **₹{mcx_rupees:+.2f} / kg**
+
+**Drivers:**  
+• Global copper momentum  
+• USDINR movement  
+"""
+    )
 
 st.divider()
-st.caption("⚠️ This is a directional risk model, not price prediction.")
+st.caption("Note: MCX impact is derived from global copper & USDINR. No direct MCX price feed is used.")
