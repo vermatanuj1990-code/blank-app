@@ -35,22 +35,6 @@ norm_momentum = momentum / 0.01
 roc = (price - copper["Close"].iloc[-6]) / copper["Close"].iloc[-6]
 norm_roc = roc / 0.03
 
-avg_vol = copper["Volume"].rolling(20).mean().iloc[-1]
-latest_vol = copper["Volume"].iloc[-1]
-
-if (
-    avg_vol is not None
-    and latest_vol is not None
-    and avg_vol > 0
-    and np.isfinite(avg_vol)
-    and np.isfinite(latest_vol)
-):
-    volume_ratio = latest_vol / avg_vol
-    if np.isfinite(volume_ratio):
-        norm_volume = min(volume_ratio / 2, 1)
-    else:
-        norm_volume = 0.0
-else:
     norm_volume = 0.0
 
 price_change = copper["Close"].iloc[-1] - copper["Close"].iloc[-2]
