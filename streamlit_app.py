@@ -35,8 +35,14 @@ norm_momentum = momentum / 0.01
 roc = (price - copper["Close"].iloc[-6]) / copper["Close"].iloc[-6]
 norm_roc = roc / 0.03
 
-volume_ratio = copper["Volume"].iloc[-1] / copper["Volume"].rolling(20).mean().iloc[-1]
-norm_volume = min(volume_ratio / 2, 1)
+avg_vol = copper["Volume"].rolling(20).mean().iloc[-1]
+latest_vol = copper["Volume"].iloc[-1]
+
+if avg_vol > 0 and not np.isnan(avg_vol) and not np.isnan(latest_vol):
+    volume_ratio = latest_vol / avg_vol
+    norm_volume = min(volume_ratio / 2, 1)
+else:
+    norm_volume = 0.0
 
 price_change = copper["Close"].iloc[-1] - copper["Close"].iloc[-2]
 oi_score = 0.4 if price_change > 0 else -0.4
