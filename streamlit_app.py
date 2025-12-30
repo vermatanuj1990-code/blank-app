@@ -38,9 +38,18 @@ norm_roc = roc / 0.03
 avg_vol = copper["Volume"].rolling(20).mean().iloc[-1]
 latest_vol = copper["Volume"].iloc[-1]
 
-if avg_vol > 0 and not np.isnan(avg_vol) and not np.isnan(latest_vol):
+if (
+    avg_vol is not None
+    and latest_vol is not None
+    and avg_vol > 0
+    and np.isfinite(avg_vol)
+    and np.isfinite(latest_vol)
+):
     volume_ratio = latest_vol / avg_vol
-    norm_volume = min(volume_ratio / 2, 1)
+    if np.isfinite(volume_ratio):
+        norm_volume = min(volume_ratio / 2, 1)
+    else:
+        norm_volume = 0.0
 else:
     norm_volume = 0.0
 
