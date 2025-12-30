@@ -21,7 +21,7 @@ except Exception as e:
     st.error("Data fetch failed")
     st.stop()
 
-if len(copper) < 25 or len(dxy) < 10 or len(us10y) < 10:
+if len(copper) < 15 or len(dxy) < 8 or len(us10y) < 8:
     st.error("Not enough data yet")
     st.stop()
 
