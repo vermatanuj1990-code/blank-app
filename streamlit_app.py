@@ -35,7 +35,7 @@ norm_momentum = momentum / 0.01
 roc = (price - copper["Close"].iloc[-6]) / copper["Close"].iloc[-6]
 norm_roc = roc / 0.03
 
-    norm_volume = 0.0
+norm_volume = 0.0
 
 price_change = copper["Close"].iloc[-1] - copper["Close"].iloc[-2]
 oi_score = 0.4 if price_change > 0 else -0.4
