@@ -8,66 +8,78 @@ st.title("🔩 Copper Price Outlook")
 st.caption("Short-term directional model | 4-Day View")
 
 @st.cache_data(ttl=3600)
-def fetch():
-    copper = yf.download("HG=F", period="60d", progress=False)
-    dxy = yf.download("DX-Y.NYB", period="60d", progress=False)
-    us10y = yf.download("^TNX", period="60d", progress=False)
-    return copper.dropna(), dxy.dropna(), us10y.dropna()
+def fetch_close(ticker):
+    df = yf.download(ticker, period="60d", progress=False)
+    closes = df["Close"].dropna().values
+    return closes.astype(float)
 
-copper, dxy, us10y = fetch()
-
-if len(copper) < 30:
-    st.error("Not enough market data yet")
+try:
+    copper = fetch_close("HG=F")
+    dxy = fetch_close("DX-Y.NYB")
+    us10y = fetch_close("^TNX")
+except Exception as e:
+    st.error("Data fetch failed")
     st.stop()
 
-# ---- SAFE VALUES ----
-price = float(copper["Close"].iloc[-1])
+if len(copper) < 25 or len(dxy) < 10 or len(us10y) < 10:
+    st.error("Not enough data yet")
+    st.stop()
 
-ma5 = float(copper["Close"].rolling(5).mean().iloc[-1])
-ma20 = float(copper["Close"].rolling(20).mean().iloc[-1])
+# ---- PURE FLOAT CALCULATIONS ----
+price = float(copper[-1])
+ma5 = float(np.mean(copper[-5:]))
+ma20 = float(np.mean(copper[-20:]))
 
-momentum = (ma5 - ma20) / price if price != 0 else 0
-roc = (price - copper["Close"].iloc[-6]) / copper["Close"].iloc[-6]
+momentum = (ma5 - ma20) / price
+roc = (price - copper[-6]) / copper[-6]
 
-dxy_roc = (dxy["Close"].iloc[-1] - dxy["Close"].iloc[-6]) / dxy["Close"].iloc[-6]
-yield_change = us10y["Close"].iloc[-1] - us10y["Close"].iloc[-5]
+price_change = price - copper[-2]
+oi_score = 0.4 if price_change > 0 else -0.4
 
-score = (
-    0.35 * np.tanh(momentum * 50) +
-    0.25 * np.tanh(roc * 20) +
-    0.20 * (-dxy_roc * 10) +
-    0.20 * (-yield_change * 5)
+usd_roc = (dxy[-1] - dxy[-6]) / dxy[-6]
+usd_score = -usd_roc
+
+yield_trend = us10y[-1] - us10y[-5]
+rate_score = -0.3 if yield_trend > 0 else 0.3
+
+trading_score = (
+    0.30 * momentum +
+    0.20 * roc +
+    0.20 * oi_score +
+    0.15 * usd_score +
+    0.15 * rate_score
 )
 
-score = np.clip(score.values[0], -1, 1) if hasattr(score, "values") else np.clip(score, -1, 1)
+trading_score = float(np.clip(trading_score, -1, 1))
 
+# ---- 4 DAY DECAY ----
 scores = [
-    score,
-    score * 0.7,
-    score * 0.5,
-    score * 0.35
+    trading_score,
+    trading_score * 0.75,
+    trading_score * 0.55,
+    trading_score * 0.40,
 ]
 
-labels = ["Today", "Tomorrow", "Day +2", "Day +3"]
-
-def interpret(s):
-    if s > 0.4:
+def interpret(score):
+    score = float(score)
+    if score > 0.35:
         return "Strong Bullish", "🟢"
-    elif s > 0.15:
+    elif score > 0.15:
         return "Mild Bullish", "🟢"
-    elif s > -0.15:
+    elif score > -0.15:
         return "Sideways", "🟡"
-    elif s > -0.4:
+    elif score > -0.35:
         return "Mild Bearish", "🔴"
     else:
         return "Strong Bearish", "🔴"
 
-for l, s in zip(labels, scores):
-    bias, icon = interpret(s)
-    st.markdown(
-        f"### {icon} {l}\n"
-        f"**Bias:** {bias}  \n"
-        f"**Confidence:** {int(abs(s)*100)}%"
-    )
+labels = ["Today", "Tomorrow", "Day +2", "Day +3"]
 
-st.caption("Model: technical + USD + rates | experimental")
+for label, s in zip(labels, scores):
+    bias, icon = interpret(s)
+    confidence = int(abs(float(s)) * 100)
+    st.markdown(
+        f"### {icon} {label}\n"
+        f"**Bias:** {bias}  \n"
+        f"**Confidence:** {confidence}%"
+    )
